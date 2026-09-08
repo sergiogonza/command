@@ -3,6 +3,7 @@ async function post(path,body){const r=await fetch(BASE+path,{method:'POST',head
 export const localAgent={
  connect:c=>post('/api/connect',c),
  domains:c=>post('/api/domains',c),
+ security:c=>post('/api/security/live',c),
  crm:(c,domains=[])=>post('/api/crm',{...c,domains}),
  plugins:(c,domains=[])=>post('/api/plugins',{...c,domains}),
  files:(c,path='')=>post('/api/files',{...c,path}),
