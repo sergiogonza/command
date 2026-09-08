@@ -1,1 +1,1 @@
-import React from 'react';import{createRoot}from'react-dom/client';import'./styles.css';import App from'./App.jsx';createRoot(document.getElementById('root')).render(<App/>);
+import React from'react';import{createRoot}from'react-dom/client';import'./styles.css';import'./v2.css';import App from'./AppV2.jsx';createRoot(document.getElementById('root')).render(<App/>);
