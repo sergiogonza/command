@@ -68,9 +68,9 @@ async function handleWordPressUpdateExecuteBuffer(buf,res){
       out=$(wp core update --skip-plugins --skip-themes 2>&1); rc=$?
       after=$(wp core version --skip-plugins --skip-themes 2>/dev/null)
       remain=$(wp core check-update --format=count --skip-plugins --skip-themes 2>/dev/null)
-      if [ $rc -eq 0 ] && [ "$after" != "$before" ] && [ "${remain:-0}" = "0" ]; then
+      if [ $rc -eq 0 ] && [ "$after" != "$before" ] && [ "\${remain:-0}" = "0" ]; then
         printf '%s|VERIFIED|%s|%s\\n' "$n" "$before" "$after"
-      elif [ $rc -eq 0 ] && [ "${remain:-0}" = "0" ]; then
+      elif [ $rc -eq 0 ] && [ "\${remain:-0}" = "0" ]; then
         printf '%s|VERIFIED|%s|%s\\n' "$n" "$before" "$after"
       else
         safe=$(printf '%s' "$out" | tr '\\n|' '__' | cut -c1-200)
