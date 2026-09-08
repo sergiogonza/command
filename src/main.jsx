@@ -1,3 +1,1 @@
-import React from'react';import{createRoot}from'react-dom/client';import'./styles.css';import'./v2.css';import AppV2 from'./AppV2.jsx';import LegacyApp from'./App.jsx';
-function Root(){const legacy=new URLSearchParams(location.search).get('legacy')==='1';const toggle=()=>{const u=new URL(location.href);if(legacy)u.searchParams.delete('legacy');else u.searchParams.set('legacy','1');location.href=u.toString()};return <><button onClick={toggle} style={{position:'fixed',right:12,top:8,zIndex:9999,fontSize:7,opacity:.75}}>{legacy?'COMMAND V2':'LEGACY UI'}</button>{legacy?<LegacyApp/>:<AppV2/>}</>}
-createRoot(document.getElementById('root')).render(<Root/>);
+import React from'react';import{createRoot}from'react-dom/client';import'./styles.css';import'./v2.css';import'./v3.css';import App from'./AppV3.jsx';createRoot(document.getElementById('root')).render(<App/>);
