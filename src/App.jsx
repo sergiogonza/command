@@ -1,106 +1,14 @@
-import React,{useState}from'react';import{Server,ShieldCheck,Boxes,Database,Package,ShoppingCart,Terminal,HardDrive,Activity,Mail,LockKeyhole,RefreshCcw,Trash2,Plus,Upload,ChevronRight,Minimize2,Maximize2}from'lucide-react';
-
-const servers=[
-{name:'VPS-01',host:'srv-01',status:'online',cpu:21,ram:48,disk:63,inodes:41,domains:28},
-{name:'VPS-02',host:'srv-02',status:'online',cpu:17,ram:39,disk:51,inodes:62,domains:31},
-{name:'VPS-03',host:'srv-03',status:'warning',cpu:72,ram:84,disk:88,inodes:91,domains:24}
-];
-const domains=[
-{name:'gotechnode.shop',vps:'VPS-02',wp:'6.x',wc:true,plugins:24,products:317,orders:4485,health:94},
-{name:'getdigitalgrid.shop',vps:'VPS-01',wp:'6.x',wc:true,plugins:19,products:204,orders:3310,health:88},
-{name:'shop-alpha.test',vps:'VPS-03',wp:'6.x',wc:true,plugins:31,products:488,orders:5102,health:71}
-];
-
-function Meter({value}){return <div className="meter"><span style={{width:value+'%'}}/></div>}
-function Window({title,children,wide}){const[min,setMin]=useState(false);return <section className={'window '+(wide?'wide':'')}><header><span>{title}</span><div><button onClick={()=>setMin(!min)}>{min?<Maximize2 size={14}/>:<Minimize2 size={14}/>}</button></div></header>{!min&&<div className="window-body">{children}</div>}</section>}
+import React,{useState}from'react';import{Server,ShieldCheck,Database,HardDrive,Activity,Terminal,Minimize2,Maximize2}from'lucide-react';import{localAgent}from'./localAgent.js';
+function Meter({value=0}){return <div className="meter"><span style={{width:Math.min(100,value)+'%'}}/></div>}
+function Window({title,children,wide}){const[min,setMin]=useState(false);return <section className={'window '+(wide?'wide':'')}><header><span>{title}</span><button onClick={()=>setMin(!min)}>{min?<Maximize2 size={14}/>:<Minimize2 size={14}/>}</button></header>{!min&&<div className="window-body">{children}</div>}</section>}
 function Stat({icon:Icon,label,value,sub}){return <div className="stat"><Icon size={18}/><div><small>{label}</small><strong>{value}</strong><em>{sub}</em></div></div>}
-
-export default function App(){
- const[selected,setSelected]=useState(domains[0]);
- const[action,setAction]=useState('');
- const[ssh,setSsh]=useState({host:'',user:'',password:''});
- return <div className="app">
-  <aside>
-   <div className="brand">NOC//COMMAND</div>
-   {[
-    ['Overview',Activity],['Servers',Server],['Domains',Database],['Security',ShieldCheck],['Files',HardDrive],
-    ['Plugins',Boxes],['Products',Package],['Orders',ShoppingCart],['Credentials',LockKeyhole],['Terminal',Terminal]
-   ].map(([x,I],i)=><button className={i===0?'active':''} key={x}><I size={17}/>{x}</button>)}
-   <div className="aside-foot">NETLIFY HUD<br/><span>CONTROL PLANE UI</span></div>
-  </aside>
-
-  <main>
-   <div className="topbar"><div><h1>Infrastructure Command Center</h1><p>Multi-VPS · WordPress · WooCommerce · Security · Operations</p></div><div className="live"><span/>LIVE TELEMETRY</div></div>
-
-   <div className="stats">
-    <Stat icon={Server} label="SERVERS" value="3" sub="2 healthy · 1 warning"/>
-    <Stat icon={Database} label="DOMAINS" value="83" sub="WooCommerce estate"/>
-    <Stat icon={ShieldCheck} label="SECURITY" value="87/100" sub="Global score"/>
-    <Stat icon={HardDrive} label="INODES" value="64%" sub="Estate average"/>
-    <Stat icon={Activity} label="UPTIME" value="99.94%" sub="30 days"/>
-   </div>
-
-   <div className="grid">
-    <Window title="SERVER MATRIX">
-     {servers.map(s=><div className="server-row" key={s.name}><div className="server-title"><b>{s.name}</b><span className={'dot '+s.status}/>{s.host}</div><div className="server-metrics">
-      <label>CPU {s.cpu}%<Meter value={s.cpu}/></label><label>RAM {s.ram}%<Meter value={s.ram}/></label>
-      <label>DISK {s.disk}%<Meter value={s.disk}/></label><label>INODES {s.inodes}%<Meter value={s.inodes}/></label>
-     </div><small>{s.domains} domains</small></div>)}
-    </Window>
-
-    <Window title="SSH CONTROL BRIDGE">
-     <div className="form-grid">
-      <label>SSH host<input value={ssh.host} onChange={e=>setSsh({...ssh,host:e.target.value})} placeholder="123.45.67.89:22"/></label>
-      <label>User<input value={ssh.user} onChange={e=>setSsh({...ssh,user:e.target.value})} placeholder="admin"/></label>
-      <label>Password<input type="password" value={ssh.password} onChange={e=>setSsh({...ssh,password:e.target.value})} placeholder="••••••••"/></label>
-     </div>
-     <div className="notice">Credentials are sent only to your private worker API. Do not store them in the frontend or repository.</div>
-     <button className="primary">CONNECT & INVENTORY</button>
-    </Window>
-
-    <Window title="DOMAIN ESTATE" wide>
-     <div className="table">
-      <div className="tr head"><span>Domain</span><span>VPS</span><span>Plugins</span><span>Products</span><span>Orders</span><span>Health</span></div>
-      {domains.map(d=><button className={'tr '+(selected.name===d.name?'selected':'')} key={d.name} onClick={()=>setSelected(d)}>
-       <span>{d.name}</span><span>{d.vps}</span><span>{d.plugins}</span><span>{d.products}</span><span>{d.orders}</span><span>{d.health}% <ChevronRight size={14}/></span>
-      </button>)}
-     </div>
-    </Window>
-
-    <Window title={'DOMAIN OPS // '+selected.name}>
-     <div className="ops">
-      <button onClick={()=>setAction('maintenance')}><RefreshCcw/>Maintenance</button>
-      <button onClick={()=>setAction('plugins')}><Trash2/>Bulk plugins</button>
-      <button onClick={()=>setAction('products')}><Plus/>Bulk products</button>
-      <button onClick={()=>setAction('orders')}><ShoppingCart/>Test orders</button>
-      <button onClick={()=>setAction('paypal')}><Mail/>PayPal email</button>
-      <button onClick={()=>setAction('credentials')}><LockKeyhole/>Users/passwords</button>
-      <button onClick={()=>setAction('backups')}><HardDrive/>Delete WPVivid backups</button>
-      <button onClick={()=>setAction('stock')}><Package/>Stock repair</button>
-     </div>
-     <div className="action-view">Selected action: <b>{action||'none'}</b></div>
-    </Window>
-
-    <Window title="SECURITY POSTURE">
-     <div className="security-grid">
-      <div><span>SSH hardening</span><b>GOOD</b></div><div><span>Open ports</span><b>7</b></div>
-      <div><span>Outdated packages</span><b>12</b></div><div><span>Failed logins</span><b>3</b></div>
-      <div><span>Writable files</span><b>9</b></div><div><span>Firewall</span><b>ACTIVE</b></div>
-     </div>
-     <button className="secondary">RUN READ-ONLY AUDIT</button>
-    </Window>
-
-    <Window title="CLAUDE OPERATOR" wide>
-     <div className="terminal">
-      <div className="terminal-log">
-       <p><span>system</span> control plane ready</p>
-       <p><span>agent</span> awaiting approved infrastructure action</p>
-       <p><span>policy</span> destructive jobs require explicit confirmation</p>
-      </div>
-      <div className="prompt"><span>claude://</span><input placeholder="Ej: revisa todos los VPS y dime qué dominios tienen inodos > 80%"/><button>RUN</button></div>
-     </div>
-    </Window>
-   </div>
-  </main>
- </div>
-}
+export default function App(){const[ssh,setSsh]=useState({host:'',port:22,user:'',password:''}),[server,setServer]=useState(null),[domains,setDomains]=useState([]),[busy,setBusy]=useState(false),[log,setLog]=useState(['control plane ready','localhost agent required on :8787']),[audit,setAudit]=useState('');
+ const connect=async()=>{setBusy(true);try{const r=await localAgent.connect(ssh);setServer(r.data);setLog(x=>[...x,`connected ${r.data.hostname}`]);const d=await localAgent.domains(ssh);setDomains(d.domains);setLog(x=>[...x,`discovered ${d.domains.length} domains`])}catch(e){setLog(x=>[...x,'ERROR '+e.message])}finally{setBusy(false)}};
+ const runAudit=async()=>{setBusy(true);try{const r=await localAgent.audit(ssh);setAudit(r.report);setLog(x=>[...x,'read-only audit completed'])}catch(e){setLog(x=>[...x,'ERROR '+e.message])}finally{setBusy(false)}};
+ return <div className="app"><aside><div className="brand">NOC//COMMAND</div>{[['Overview',Activity],['Servers',Server],['Domains',Database],['Security',ShieldCheck],['Files',HardDrive],['Terminal',Terminal]].map(([x,I],i)=><button className={i===0?'active':''} key={x}><I size={17}/>{x}</button>)}<div className="aside-foot">LOCAL CONTROL<br/><span>NETLIFY READY</span></div></aside><main><div className="topbar"><div><h1>Infrastructure Command Center</h1><p>Localhost SSH · WordPress · WooCommerce · Security · AI-ready</p></div><div className="live"><span/>{server?'CONNECTED':'LOCAL AGENT'}</div></div>
+ <div className="stats"><Stat icon={Server} label="SERVER" value={server?.hostname||'—'} sub={server?.os||'not connected'}/><Stat icon={Database} label="DOMAINS" value={server?.domains??'—'} sub="discovered via SSH"/><Stat icon={Activity} label="RAM" value={server?server.memory.percent+'%':'—'} sub={server?server.memory.used+' / '+server.memory.total+' MB':'memory'}/><Stat icon={HardDrive} label="DISK" value={server?server.disk.percent+'%':'—'} sub="root filesystem"/><Stat icon={HardDrive} label="INODES" value={server?server.inodes.percent+'%':'—'} sub="root filesystem"/></div>
+ <div className="grid"><Window title="SSH CONTROL BRIDGE"><div className="form-grid"><label>SSH host<input value={ssh.host} onChange={e=>setSsh({...ssh,host:e.target.value})} placeholder="123.45.67.89"/></label><label>Port<input value={ssh.port} onChange={e=>setSsh({...ssh,port:e.target.value})}/></label><label>User<input value={ssh.user} onChange={e=>setSsh({...ssh,user:e.target.value})} placeholder="admin"/></label><label>Password<input type="password" value={ssh.password} onChange={e=>setSsh({...ssh,password:e.target.value})} placeholder="••••••••"/></label></div><div className="notice">Password stays in browser memory for this session and is sent to your localhost agent; it is not committed to GitHub.</div><button className="primary" disabled={busy||!ssh.host||!ssh.user||!ssh.password} onClick={connect}>{busy?'WORKING...':'CONNECT & INVENTORY'}</button></Window>
+ <Window title="LIVE SERVER"><div className="server-row"><div className="server-title"><b>{server?.hostname||'WAITING'}</b><span className={'dot '+(server?'online':'warning')}/>{server?.uptime||'connect a VPS'}</div><div className="server-metrics"><label>RAM {server?.memory.percent||0}%<Meter value={server?.memory.percent}/></label><label>DISK {server?.disk.percent||0}%<Meter value={server?.disk.percent}/></label><label>INODES {server?.inodes.percent||0}%<Meter value={server?.inodes.percent}/></label><label>LOAD<Meter value={0}/></label></div></div><button className="secondary" disabled={!server||busy} onClick={runAudit}>RUN READ-ONLY AUDIT</button></Window>
+ <Window title="DOMAIN ESTATE" wide><div className="table"><div className="tr head"><span>Domain</span><span>WordPress</span><span>WooCommerce</span><span></span><span></span><span>Status</span></div>{domains.map(d=><div className="tr" key={d.name}><span>{d.name}</span><span>{d.wordpress?'YES':'NO'}</span><span>{d.woocommerce?'YES':'NO'}</span><span></span><span></span><span>DISCOVERED</span></div>)}</div></Window>
+ <Window title="SECURITY / SYSTEM AUDIT" wide><pre className="terminal-log">{audit||'Run the read-only audit to inspect listening ports, available package updates and largest domain directories.'}</pre></Window>
+ <Window title="COMMAND AI // OPERATOR" wide><div className="terminal"><div className="terminal-log">{log.map((x,i)=><p key={i}><span>{i?'agent':'system'}</span>{x}</p>)}</div><div className="prompt"><span>command://</span><input placeholder="AI provider will be connected after telemetry layer" disabled/><button disabled>RUN</button></div></div></Window></div></main></div>}
