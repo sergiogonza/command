@@ -1,0 +1,96 @@
+import http from 'node:http';
+import {spawn} from 'node:child_process';
+import {Client} from 'ssh2';
+import geoip from 'geoip-lite';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const FRONT_PORT=Number(process.env.COMMAND_PORT||8787);
+const UPSTREAM_PORT=Number(process.env.COMMAND_UPSTREAM_PORT||8788);
+const HOST='127.0.0.1';
+const EVENTS_FILE=path.join(process.cwd(),'server','data','events.jsonl');
+
+const child=spawn(process.execPath,['server/index-v2.mjs'],{
+  stdio:'inherit',
+  env:{...process.env,COMMAND_PORT:String(UPSTREAM_PORT)}
+});
+child.on('exit',code=>{if(code!==0)console.error('COMMAND core exited',code)});
+
+const q=s=>`'${String(s??'').replaceAll("'","'\\''")}'`;
+const validDomains=a=>(Array.isArray(a)?a:[]).filter(x=>/^[a-z0-9.-]+$/i.test(x));
+const validPlugins=a=>(Array.isArray(a)?a:[]).filter(x=>/^[a-z0-9._-]+$/i.test(x));
+
+function cors(res){
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age','86400');
+}
+function json(res,status,payload){cors(res);res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(payload))}
+function readBody(req,limit=20*1024*1024){return new Promise((resolve,reject)=>{const chunks=[];let size=0;req.on('data',d=>{size+=d.length;if(size>limit){reject(new Error('Request too large'));req.destroy();return}chunks.push(d)});req.on('end',()=>resolve(Buffer.concat(chunks)));req.on('error',reject)})}
+function execSSHRaw({host,port=22,user,password},command,timeoutMs=90000){return new Promise((resolve,reject)=>{const c=new Client();const timer=setTimeout(()=>{c.end();reject(new Error('SSH timeout'))},timeoutMs);c.on('ready',()=>c.exec(command,(err,s)=>{if(err){clearTimeout(timer);c.end();return reject(err)}let stdout='',stderr='';s.on('data',d=>stdout+=d);s.stderr.on('data',d=>stderr+=d);s.on('close',code=>{clearTimeout(timer);c.end();resolve({stdout,stderr,code:Number(code||0)})})})).on('error',e=>{clearTimeout(timer);reject(e)}).connect({host,port:Number(port)||22,username:user,password,readyTimeout:20000,keepaliveInterval:10000,keepaliveCountMax:2})})}
+function geo(ip){if(!ip)return null;const g=geoip.lookup(ip);return g?{country:g.country||'',region:g.region||'',city:g.city||'',timezone:g.timezone||'',lat:g.ll?.[0]??null,lon:g.ll?.[1]??null}:null}
+function appendEvent(e){try{fs.mkdirSync(path.dirname(EVENTS_FILE),{recursive:true});fs.appendFileSync(EVENTS_FILE,JSON.stringify({ts:new Date().toISOString(),...e})+'\n')}catch{}}
+function readEvents(limit=1000){try{if(!fs.existsSync(EVENTS_FILE))return[];return fs.readFileSync(EVENTS_FILE,'utf8').split('\n').filter(Boolean).slice(-limit).map(x=>{try{return JSON.parse(x)}catch{return null}}).filter(Boolean)}catch{return[]}}
+function ontology(events){const m=new Map();for(const e of events){if(!e.ip)continue;const x=m.get(e.ip)||{ip:e.ip,first_seen:e.ts,last_seen:e.ts,count:0,actions:new Set(),hosts:new Set(),geo:e.geo||geo(e.ip)};x.count++;if(e.ts<x.first_seen)x.first_seen=e.ts;if(e.ts>x.last_seen)x.last_seen=e.ts;if(e.action)x.actions.add(e.action);if(e.host)x.hosts.add(e.host);m.set(e.ip,x)}return[...m.values()].map(x=>({...x,actions:[...x.actions],hosts:[...x.hosts]})).sort((a,b)=>String(b.last_seen).localeCompare(String(a.last_seen)))}
+function extractIPs(text){return[...new Set((text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)||[]).filter(ip=>!['0.0.0.0','127.0.0.1'].includes(ip)))]}
+function parseSections(raw){const keys=['SSH','ADDR','ROUTE','SOCKETS','LISTEN','NETDEV','WHO','LAST','FAILED','TOPCPU','TOPMEM','HISTORY'];const s={};let k='';for(const line of raw.split('\n')){const m=line.match(/^==([A-Z]+)==$/);if(m&&keys.includes(m[1])){k=m[1];s[k]=[];continue}if(k)(s[k]??=[]).push(line)}return s}
+function parseSSH(lines=[]){const m=lines.join('\n').match(/SSH_CONNECTION=((?:\d{1,3}\.){3}\d{1,3})\s+(\d+)\s+((?:\d{1,3}\.){3}\d{1,3})\s+(\d+)/);return m?{source_ip:m[1],source_port:Number(m[2]),destination_ip:m[3],destination_port:Number(m[4])}:null}
+function caps(s){const t=k=>(s[k]||[]).join('\n').trim();return{ssh:!!parseSSH(s.SSH),addresses:!!t('ADDR'),routes:!!t('ROUTE'),sockets:!!t('SOCKETS'),listeners:!!t('LISTEN'),netdev:/:/.test(t('NETDEV')),sessions:!!t('WHO'),login_history:!!t('LAST'),failed_history:!!t('FAILED'),processes:!!t('TOPCPU')}}
+function parseInventory(raw){const o={};for(const line of raw.split('\n')){if(!line.startsWith('INV|'))continue;const p=line.split('|');o[p[1]]=p.slice(2).join('|')}const mem=(o.MEM||'0,0,0').split(',').map(Number),disk=(o.DISK||'0,0,0,0').split(',').map(Number),ino=(o.INODES||'0,0,0,0').split(',').map(Number);return{hostname:o.HOSTNAME||'',os:o.OS||'',uptime:o.UPTIME||'',load:o.LOAD||'',memory:{total:mem[0]||0,used:mem[1]||0,available:mem[2]||0,percent:mem[0]?Math.round((mem[1]||0)/mem[0]*100):0},disk:{total:disk[0]||0,used:disk[1]||0,available:disk[2]||0,percent:disk[3]||0},inodes:{total:ino[0]||0,used:ino[1]||0,available:ino[2]||0,percent:ino[3]||0},domains:Number(o.DOMAINS||0)}}
+
+const QUICK=[
+"printf 'INV|HOSTNAME|'; hostname",
+"printf 'INV|UPTIME|'; (uptime -p 2>/dev/null || uptime) | tr '\\n' ' '; printf '\\n'",
+"printf 'INV|LOAD|'; (cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || printf '?'); printf '\\n'",
+"printf 'INV|MEM|'; free -m 2>/dev/null | awk '/Mem:/{print $2\",\"$3\",\"$7}'",
+"printf 'INV|DISK|'; df -P \"$HOME\" 2>/dev/null | awk 'NR==2{gsub(\"%\",\"\",$5);print $2\",\"$3\",\"$4\",\"$5}'",
+"printf 'INV|INODES|'; df -Pi \"$HOME\" 2>/dev/null | awk 'NR==2{gsub(\"%\",\"\",$5);print $2\",\"$3\",\"$4\",\"$5}'",
+"printf 'INV|OS|'; grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\"'; printf '\\n'",
+"printf 'INV|DOMAINS|'; find \"$HOME/domains\" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l",
+"printf '==SSH==\\n'; printf 'SSH_CONNECTION=%s\\n' \"$SSH_CONNECTION\"; printf 'SSH_CLIENT=%s\\n' \"$SSH_CLIENT\"",
+"printf '==ADDR==\\n'; (ip -brief addr 2>/dev/null || ifconfig 2>/dev/null || true) | head -60",
+"printf '==ROUTE==\\n'; (ip route 2>/dev/null || route -n 2>/dev/null || true) | head -60",
+"printf '==SOCKETS==\\n'; (ss -Htunap 2>/dev/null || ss -Htuna 2>/dev/null || netstat -tuna 2>/dev/null || true) | head -120",
+"printf '==LISTEN==\\n'; (ss -Hlntup 2>/dev/null || ss -Hlntu 2>/dev/null || netstat -lntu 2>/dev/null || true) | head -80",
+"printf '==NETDEV==\\n'; (cat /proc/net/dev 2>/dev/null || true) | head -40",
+"printf '==WHO==\\n'; (who 2>/dev/null || true) | head -30",
+"printf '==LAST==\\n'; (last -i -n 30 2>/dev/null || true) | head -35",
+"printf '==FAILED==\\n'; (lastb -i -n 30 2>/dev/null || true) | head -35",
+"printf '==TOPCPU==\\n'; (ps -eo pid,user,%cpu,%mem,etime,comm --sort=-%cpu 2>/dev/null || true) | head -30",
+"printf '==TOPMEM==\\n'; (ps -eo pid,user,%cpu,%mem,etime,comm --sort=-%mem 2>/dev/null || true) | head -30",
+"printf '==HISTORY==\\n'; (tail -n 50 \"$HOME/.bash_history\" 2>/dev/null || true)",
+"exit 0"
+].join('\n');
+
+async function quickTelemetry(credentials){const rr=await execSSHRaw(credentials,QUICK,90000);const sections=parseSections(rr.stdout);const ssh=parseSSH(sections.SSH);const ips=extractIPs(Object.values(sections).flat().join('\n'));if(ssh?.source_ip)appendEvent({action:'ssh_session',host:credentials.host,user:credentials.user,ip:ssh.source_ip,port:ssh.source_port,geo:geo(ssh.source_ip)});const ev=readEvents();return{data:parseInventory(rr.stdout),security:{ok:true,ssh,currentIp:ssh?.source_ip||'',currentGeo:geo(ssh?.source_ip),ips,sections,capabilities:caps(sections),events:ev.slice(-200).reverse(),ontology:ontology(ev)}}}
+
+async function handleConnect(buf,res){try{const body=JSON.parse(buf.toString()||'{}');if(!body.host||!body.user||!body.password)return json(res,400,{ok:false,error:'Host, user and password are required'});const x=await quickTelemetry(body);appendEvent({action:'connect',host:body.host,user:body.user,target_hostname:x.data.hostname,ip:x.security.currentIp||undefined,geo:x.security.currentGeo||undefined});json(res,200,{ok:true,...x})}catch(e){json(res,400,{ok:false,error:e.message})}}
+async function handleTelemetry(buf,res){try{const body=JSON.parse(buf.toString()||'{}');const x=await quickTelemetry(body);json(res,200,x.security)}catch(e){json(res,400,{ok:false,error:e.message})}}
+
+async function handlePlugins(buf,res){try{const body=JSON.parse(buf.toString()||'{}'),domains=validDomains(body.domains);if(!domains.length)return json(res,400,{ok:false,error:'Select at least one domain'});const list=domains.map(q).join(' ');const cmd=`for n in ${list}; do p="$HOME/domains/$n/public_html"; [ -f "$p/wp-config.php" ] || { printf '%s|__DIAG__|skip|no_wp_config\\n' "$n"; continue; }; cd "$p" 2>/dev/null || { printf '%s|__DIAG__|error|cannot_cd\\n' "$n"; continue; }; out=$(wp plugin list --fields=name,status,version --format=csv --skip-themes 2>&1); rc=$?; [ $rc -eq 0 ] || { safe=$(printf '%s' "$out"|tr '\\n|' '__'|cut -c1-180); printf '%s|__DIAG__|error|%s\\n' "$n" "$safe"; continue; }; printf '%s\\n' "$out"|tail -n +2|while IFS=, read -r a b c; do a=$(printf '%s' "$a"|sed 's/^"//;s/"$//'); b=$(printf '%s' "$b"|sed 's/^"//;s/"$//'); c=$(printf '%s' "$c"|sed 's/^"//;s/"$//'); [ -n "$a" ]&&printf '%s|%s|%s|%s\\n' "$n" "$a" "$b" "$c"; done; done; exit 0`;const rr=await execSSHRaw(body,cmd,300000);const plugins=[],diagnostics=[];for(const line of rr.stdout.split('\n').filter(Boolean)){const p=line.split('|');if(p[1]==='__DIAG__'){diagnostics.push({domain:p[0],status:p[2],message:p.slice(3).join('|')});continue}if(p.length>=4)plugins.push({domain:p[0],name:p[1],status:p[2],version:p.slice(3).join('|')})}const m=new Map();for(const p of plugins){const x=m.get(p.name)||{name:p.name,installed:0,active:0,inactive:0,versions:new Set(),domains:[]};x.installed++;if(p.status==='active')x.active++;else x.inactive++;x.versions.add(p.version||'');x.domains.push(p.domain);m.set(p.name,x)}const inventory=[...m.values()].map(x=>({...x,versions:[...x.versions].filter(Boolean)})).sort((a,b)=>a.name.localeCompare(b.name));json(res,200,{ok:true,plugins,inventory,targetCount:domains.length,uniqueCount:inventory.length,diagnostics})}catch(e){json(res,400,{ok:false,error:e.message})}}
+
+async function handleWpScan(buf,res){try{const body=JSON.parse(buf.toString()||'{}'),domains=validDomains(body.domains);if(!domains.length)return json(res,400,{ok:false,error:'Select at least one domain'});const list=domains.map(q).join(' ');const cmd=`for n in ${list}; do p="$HOME/domains/$n/public_html"; [ -f "$p/wp-config.php" ] || { printf '%s|ERROR|no_wp_config\\n' "$n"; continue; }; cd "$p" 2>/dev/null || { printf '%s|ERROR|cannot_cd\\n' "$n"; continue; }; current=$(wp core version --skip-plugins --skip-themes 2>/dev/null); [ -n "$current" ] || { printf '%s|ERROR|core_version_unreadable\\n' "$n"; continue; }; row=$(wp core check-update --format=csv --fields=version,update_type --skip-plugins --skip-themes 2>/dev/null|tail -n +2|head -1); if [ -n "$row" ]; then latest=$(printf '%s' "$row"|cut -d, -f1|tr -d '"'); typ=$(printf '%s' "$row"|cut -d, -f2|tr -d '"'); printf '%s|UPDATE|%s|%s|%s\\n' "$n" "$current" "$latest" "$typ"; else printf '%s|CURRENT|%s|%s|none\\n' "$n" "$current" "$current"; fi; done; exit 0`;const rr=await execSSHRaw(body,cmd,300000);const sites=rr.stdout.split('\n').filter(Boolean).map(line=>{const [domain,status,current='',latest='',type='']=line.split('|');return{domain,status,current,latest,type,needsUpdate:status==='UPDATE',error:status==='ERROR'?current:''}});json(res,200,{ok:true,sites,targets:domains.length,needsUpdate:sites.filter(x=>x.needsUpdate).length,current:sites.filter(x=>x.status==='CURRENT').length,errors:sites.filter(x=>x.status==='ERROR').length})}catch(e){json(res,400,{ok:false,error:e.message})}}
+async function handleWpUpdate(buf,res){try{const body=JSON.parse(buf.toString()||'{}'),domains=validDomains(body.domains);if(!domains.length)return json(res,400,{ok:false,error:'Select at least one domain'});if(body.confirm!==true)return json(res,400,{ok:false,error:'Explicit confirmation required'});const list=domains.map(q).join(' ');const cmd=`for n in ${list}; do p="$HOME/domains/$n/public_html"; [ -f "$p/wp-config.php" ] || { printf '%s|SKIP|no_wp_config\\n' "$n"; continue; }; cd "$p" 2>/dev/null || { printf '%s|ERROR|cannot_cd\\n' "$n"; continue; }; before=$(wp core version --skip-plugins --skip-themes 2>/dev/null); row=$(wp core check-update --format=csv --fields=version --skip-plugins --skip-themes 2>/dev/null|tail -n +2|head -1); [ -n "$row" ] || { printf '%s|SKIP|already_current|%s\\n' "$n" "$before"; continue; }; out=$(wp core update --skip-plugins --skip-themes 2>&1); rc=$?; after=$(wp core version --skip-plugins --skip-themes 2>/dev/null); remain=$(wp core check-update --format=count --skip-plugins --skip-themes 2>/dev/null); if [ $rc -eq 0 ] && [ "$remain" = "0" ]; then printf '%s|VERIFIED|%s|%s\\n' "$n" "$before" "$after"; else safe=$(printf '%s' "$out"|tr '\\n|' '__'|cut -c1-180); printf '%s|ERROR|%s|%s|%s\\n' "$n" "$before" "$after" "$safe"; fi; done; exit 0`;const rr=await execSSHRaw(body,cmd,600000);const lines=rr.stdout.split('\n').filter(Boolean),verified=lines.filter(x=>x.includes('|VERIFIED|')).length,skipped=lines.filter(x=>x.includes('|SKIP|')).length,failed=lines.filter(x=>x.includes('|ERROR|')).length;json(res,200,{ok:true,report:[...lines,`SUMMARY|verified=${verified}|skipped=${skipped}|failed=${failed}|targets=${domains.length}`].join('\n'),summary:{verified,skipped,failed,targets:domains.length}})}catch(e){json(res,400,{ok:false,error:e.message})}}
+
+async function handleSpecialExecute(buf,res){let body;try{body=JSON.parse(buf.toString()||'{}')}catch{return null}const job=body.job||{};if(job.type==='backup_cleanup'){const domains=validDomains(job.domains);if(!domains.length||body.confirmation!==job.confirmation)return json(res,400,{ok:false,error:'Confirmation token mismatch'});const list=domains.map(q).join(' ');const cmd=`for n in ${list}; do p="$HOME/domains/$n/public_html"; [ -f "$p/wp-config.php" ] || { printf '%s|backup|SKIP|no_wp_config\\n' "$n"; continue; }; cd "$p" 2>/dev/null || { printf '%s|backup|ERROR|cannot_cd\\n' "$n"; continue; }; found=0; for x in wp-content/wpvividbackups wp-content/wpvivid_uploads wp-content/updraft wp-content/backups; do [ -e "$x" ] || continue; found=1; size=$(du -sh "$x" 2>/dev/null|awk '{print $1}'); rm -rf -- "$x" 2>/dev/null; if [ ! -e "$x" ]; then printf '%s|backup|VERIFIED|deleted|%s|%s\\n' "$n" "$x" "$size"; else printf '%s|backup|ERROR|not_deleted|%s|%s\\n' "$n" "$x" "$size"; fi; done; [ $found -eq 1 ] || printf '%s|backup|SKIP|no_backup_dirs\\n' "$n"; done; exit 0`;const rr=await execSSHRaw(body,cmd,600000);const lines=rr.stdout.split('\n').filter(Boolean);return json(res,200,{ok:true,report:lines.join('\n')})}if(job.type==='plugin_delete'){const domains=validDomains(job.domains),plugins=validPlugins(job.plugins).filter(x=>x!=='woocommerce');if(!domains.length||body.confirmation!==job.confirmation)return json(res,400,{ok:false,error:'Confirmation token mismatch'});const list=domains.map(q).join(' '),plist=plugins.map(q).join(' ');const cmd=`for n in ${list}; do p="$HOME/domains/$n/public_html"; [ -f "$p/wp-config.php" ] || continue; cd "$p" 2>/dev/null || continue; for slug in ${plist}; do if ! wp plugin is-installed "$slug" --skip-themes >/dev/null 2>&1; then printf '%s|plugin|SKIP|%s|not_installed\\n' "$n" "$slug"; continue; fi; wp plugin deactivate "$slug" --skip-themes >/dev/null 2>&1||true; wp plugin delete "$slug" --skip-themes >/dev/null 2>&1; if ! wp plugin is-installed "$slug" --skip-themes >/dev/null 2>&1; then printf '%s|plugin|VERIFIED|%s|deleted\\n' "$n" "$slug"; else printf '%s|plugin|ERROR|%s|not_deleted\\n' "$n" "$slug"; fi; done; done; exit 0`;const rr=await execSSHRaw(body,cmd,600000);return json(res,200,{ok:true,report:rr.stdout})}return null}
+
+function proxyBuffer(req,res,buf){const headers={...req.headers,host:`${HOST}:${UPSTREAM_PORT}`,'content-length':String(buf.length)};const p=http.request({host:HOST,port:UPSTREAM_PORT,path:req.url,method:req.method,headers},u=>{cors(res);res.writeHead(u.statusCode||502,u.headers);u.pipe(res)});p.on('error',e=>json(res,502,{ok:false,error:`Agent core unavailable: ${e.message}`}));p.end(buf)}
+function proxy(req,res){const headers={...req.headers,host:`${HOST}:${UPSTREAM_PORT}`};const p=http.request({host:HOST,port:UPSTREAM_PORT,path:req.url,method:req.method,headers},u=>{cors(res);res.writeHead(u.statusCode||502,u.headers);u.pipe(res)});p.on('error',e=>json(res,502,{ok:false,error:`Agent core unavailable: ${e.message}`}));req.pipe(p)}
+
+const server=http.createServer(async(req,res)=>{
+  cors(res);
+  if(req.method==='OPTIONS'){res.writeHead(204);return res.end()}
+  try{
+    if(req.method==='POST'&&req.url==='/api/connect')return handleConnect(await readBody(req),res);
+    if(req.method==='POST'&&(req.url==='/api/security/live'||req.url==='/api/network/live'))return handleTelemetry(await readBody(req),res);
+    if(req.method==='POST'&&req.url==='/api/plugins')return handlePlugins(await readBody(req),res);
+    if(req.method==='POST'&&req.url==='/api/wordpress/updates')return handleWpScan(await readBody(req),res);
+    if(req.method==='POST'&&req.url==='/api/wordpress/update')return handleWpUpdate(await readBody(req),res);
+    if(req.method==='POST'&&req.url==='/api/jobs/execute'){const buf=await readBody(req);const done=await handleSpecialExecute(buf,res);if(done!==null)return done;return proxyBuffer(req,res,buf)}
+    return proxy(req,res);
+  }catch(e){return json(res,400,{ok:false,error:e.message})}
+});
+server.listen(FRONT_PORT,HOST,()=>console.log(`COMMAND gateway v0.8.1 stable http://${HOST}:${FRONT_PORT} -> ${UPSTREAM_PORT}`));
+process.on('SIGINT',()=>{child.kill('SIGINT');server.close(()=>process.exit(0))});
+process.on('SIGTERM',()=>{child.kill('SIGTERM');server.close(()=>process.exit(0))});
