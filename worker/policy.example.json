@@ -1,0 +1,27 @@
+{
+  "default_mode": "read_only",
+  "require_confirmation": [
+    "wp_plugin_delete_bulk",
+    "wp_backup_cleanup",
+    "wc_product_delete_bulk",
+    "wc_product_import",
+    "wc_stock_fix",
+    "wc_test_orders",
+    "wc_update_order_billing",
+    "wc_update_paypal_email",
+    "wp_update_user",
+    "package_install",
+    "package_remove",
+    "service_restart"
+  ],
+  "never_allow_from_ai_without_human_confirmation": [
+    "firewall_change",
+    "ssh_config_change",
+    "database_drop",
+    "filesystem_recursive_delete",
+    "credential_rotation"
+  ],
+  "allowed_roots": [
+    "$HOME/domains"
+  ]
+}
