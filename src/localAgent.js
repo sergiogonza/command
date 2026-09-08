@@ -5,6 +5,6 @@ export const localAgent={
  connect:c=>post('/api/connect',c),domains:c=>post('/api/domains',c),security:c=>post('/api/security/live',c),
  crm:(c,domains=[])=>post('/api/crm',{...c,domains}),payments:(c,domains=[])=>post('/api/payments',{...c,domains}),plugins:(c,domains=[])=>post('/api/plugins',{...c,domains}),
  uploadPlugin,
- files:(c,path='')=>post('/api/files',{...c,path}),fileUsage:(c,path='')=>post('/api/files/usage',{...c,path}),products:(c,domains=[])=>post('/api/products',{...c,domains}),audit:c=>post('/api/audit',c),
+ files:(c,path='')=>post('/api/files',{...c,path}),fileUsage:(c,path='')=>post('/api/files/usage',{...c,path}),products:(c,domains=[])=>post('/api/products',{...c,domains}),commerce:(c,domains=[])=>post('/api/commerce/summary',{...c,domains}),orders:(c,domains=[])=>post('/api/commerce/orders',{...c,domains}),customers:(c,domains=[])=>post('/api/commerce/customers',{...c,domains}),audit:c=>post('/api/audit',c),
  preview:(c,job)=>post('/api/jobs/preview',{...c,job}),execute:(c,job,confirmation)=>post('/api/jobs/execute',{...c,job,confirmation})
 };
