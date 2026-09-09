@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+memory/*.db
+models/**/*.gguf
+models/**/*.bin
+models/**/*.safetensors
+models/**/*.part
