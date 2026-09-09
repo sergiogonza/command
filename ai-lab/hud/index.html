@@ -1,0 +1,18 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CYBERMIND</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="shell">
+<header><div><b>CYBERMIND</b><span>// COGNITIVE OPERATIONS LAB</span></div><div class="status"><span>LOCALHOST</span><i class="dot"></i><span id="clock"></span></div></header>
+<aside>
+<div class="brandmark">◈</div>
+<nav><button class="active">COMMAND</button><button>SYSTEM</button><button>NETWORK</button><button>KNOWLEDGE</button><button>ONTOLOGY</button><button>MEMORY</button><hr><button>MODEL LAB</button><button>PROMPT LAB</button><button>RED TEAM</button></nav>
+<div class="models"><label>LOGIC <em id="logicState">SLEEP</em></label><label>REASON <em id="reasonState">SLEEP</em></label></div>
+</aside>
+<main>
+<section class="metrics"><div><small>RAM</small><strong id="ram">--</strong></div><div><small>LOAD</small><strong id="load">--</strong></div><div><small>UPTIME</small><strong id="uptime">--</strong></div><div><small>ROUTE</small><strong id="route">IDLE</strong></div></section>
+<section class="workspace">
+<div class="graphPanel panel"><div class="panelTitle">ONTOLOGY / SEMANTIC ACTIVATION <span id="traceId">NO TRACE</span></div><svg id="graph" viewBox="0 0 800 460"></svg></div>
+<div class="tracePanel panel"><div class="panelTitle">AI TRACE</div><div id="trace" class="trace"><div class="muted">Waiting for query...</div></div></div>
+</section>
+<section class="stream panel"><div class="panelTitle">EXECUTION STREAM</div><div id="stream"><span class="muted">No active execution.</span></div></section>
+<section class="composer panel"><textarea id="query" placeholder="Pregunta al sistema..."></textarea><div class="controls"><div class="modes"><button data-mode="AUTO" class="selected">AUTO</button><button data-mode="LOGIC">LOGIC</button><button data-mode="REASON">REASON</button><button data-mode="DUAL">DUAL</button></div><button id="run" class="run">RUN</button></div></section>
+<section class="response panel"><div class="panelTitle">RESPONSE <span id="brain"></span></div><pre id="answer">La respuesta aparecerá aquí.</pre><div class="feedback"><button data-fb="1">👍</button><button data-fb="-1">👎</button></div></section>
+</main></div><script src="/static/app.js"></script></body></html>
