@@ -1,6 +1,6 @@
 {
   "name":"command-center",
-  "version":"0.9.6",
+  "version":"0.9.7",
   "private":true,
   "type":"module",
   "scripts":{"dev":"vite","agent":"node server/launcher-v096.mjs","agent:ui":"node server/agent-v094.mjs","agent:telemetry":"node server/telemetry-sidecar.mjs","agent:core":"node server/index.mjs","agent:legacy":"node server/index.mjs","build":"vite build","preview":"vite preview"},
