@@ -1,9 +1,9 @@
 {
   "name":"command-center",
-  "version":"0.9.5",
+  "version":"0.9.6",
   "private":true,
   "type":"module",
-  "scripts":{"dev":"vite","agent":"node server/agent-v094.mjs","agent:previous":"node server/agent-v093.mjs","agent:core":"node server/index.mjs","agent:legacy":"node server/index.mjs","build":"vite build","preview":"vite preview"},
+  "scripts":{"dev":"vite","agent":"node server/launcher-v096.mjs","agent:ui":"node server/agent-v094.mjs","agent:telemetry":"node server/telemetry-sidecar.mjs","agent:core":"node server/index.mjs","agent:legacy":"node server/index.mjs","build":"vite build","preview":"vite preview"},
   "dependencies":{"@vitejs/plugin-react":"^4.3.1","vite":"^5.4.8","react":"^18.3.1","react-dom":"^18.3.1","lucide-react":"^0.468.0","express":"^4.21.2","cors":"^2.8.5","ssh2":"^1.16.0","multer":"^1.4.5-lts.1","geoip-lite":"^1.4.10"},
   "devDependencies":{}
 }
