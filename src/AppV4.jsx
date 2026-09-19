@@ -1,4 +1,4 @@
-import React,{useMemo,useState}from'react';
+import React,{useEffect,useMemo,useState}from'react';
 import{Activity,AlertTriangle,CheckCircle2,CreditCard,Database,Download,HardDrive,History,LayoutGrid,MapPinned,Network,PackagePlus,Plug,RefreshCw,Search,Server,ShieldAlert,ShieldCheck,ShoppingCart,Trash2,Upload,Users,Wrench,Zap}from'lucide-react';
 import{agent}from'./localAgentV2.js';
 import{SERVER_PROFILES}from'./serverProfiles.js';
