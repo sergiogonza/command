@@ -72,7 +72,14 @@ app.post('/api/products',async(req,res)=>{try{
   if(!domains.length)return res.status(400).json({ok:false,error:'Select at least one domain'});
   const c={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
   const products=[],diagnostics=[];
-  const php='$wpdb=$GLOBALS["wpdb"];$rows=$wpdb->get_results("SELECT ID,post_title,post_name,post_status FROM {$wpdb->posts} WHERE post_type=\\'product\\' AND post_status NOT IN (\\'trash\\',\\'auto-draft\\') ORDER BY ID DESC",ARRAY_A);foreach($rows as $x){$id=(int)$x["ID"];$d=["id"=>$id,"name"=>$x["post_title"],"slug"=>$x["post_name"],"post_status"=>$x["post_status"],"sku"=>get_post_meta($id,"_sku",true),"price"=>get_post_meta($id,"_regular_price",true),"sale_price"=>get_post_meta($id,"_sale_price",true),"stock"=>get_post_meta($id,"_stock",true),"stock_status"=>get_post_meta($id,"_stock_status",true),"type"=>"product"];echo "ROW|".base64_encode(wp_json_encode($d))."\\n";}echo "DONE|".count($rows)."\\n";';
+  const php=`$wpdb=$GLOBALS["wpdb"];
+$rows=$wpdb->get_results("SELECT ID,post_title,post_name,post_status FROM {$wpdb->posts} WHERE post_type='product' AND post_status NOT IN ('trash','auto-draft') ORDER BY ID DESC",ARRAY_A);
+foreach($rows as $x){
+  $id=(int)$x["ID"];
+  $d=["id"=>$id,"name"=>$x["post_title"],"slug"=>$x["post_name"],"post_status"=>$x["post_status"],"sku"=>get_post_meta($id,"_sku",true),"price"=>get_post_meta($id,"_regular_price",true),"sale_price"=>get_post_meta($id,"_sale_price",true),"stock"=>get_post_meta($id,"_stock",true),"stock_status"=>get_post_meta($id,"_stock_status",true),"type"=>"product"];
+  echo "ROW|".base64_encode(wp_json_encode($d)).PHP_EOL;
+}
+echo "DONE|".count($rows).PHP_EOL;`;
   for(const domain of domains){try{
     const cmd='cd "$HOME/domains/'+domain+'/public_html"||exit 21;[ -f wp-config.php ]||exit 22;wp eval '+q(php)+' --skip-themes --skip-plugins 2>/dev/null';
     const x=await sshExec(c,cmd,45000);let done=false;
