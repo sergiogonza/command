@@ -66,6 +66,26 @@ app.post('/api/ops/job-start',(req,res)=>{try{const job=req.body.job||{},domains
 app.post('/api/ops/commerce-start',(req,res)=>{try{const domains=validDomains(req.body.domains);if(!domains.length)throw new Error('Select at least one domain');const j=newJob('commerce_metrics',domains);const c={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};runCommerce(j,c,domains);res.status(202).json({ok:true,job:publicJob(j)})}catch(e){res.status(400).json({ok:false,error:e.message})}});
 app.post('/api/plugins/upload',upload.single('file'),(req,res)=>{try{if(!req.file||!/\.zip$/i.test(req.file.originalname))throw new Error('ZIP plugin required');const domains=validDomains(JSON.parse(req.body.domains||'[]'));if(!domains.length)throw new Error('Select at least one domain');const c={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};const j=newJob('plugin_upload',domains);runPluginUpload(j,c,domains,req.file,req.body.activate==='true');res.status(202).json({ok:true,job:publicJob(j)})}catch(e){res.status(400).json({ok:false,error:e.message})}});
 
+
+app.post('/api/products',async(req,res)=>{try{
+  const domains=validDomains(req.body.domains);
+  if(!domains.length)return res.status(400).json({ok:false,error:'Select at least one domain'});
+  const c={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
+  const products=[],diagnostics=[];
+  const php='$wpdb=$GLOBALS["wpdb"];$rows=$wpdb->get_results("SELECT ID,post_title,post_name,post_status FROM {$wpdb->posts} WHERE post_type=\\'product\\' AND post_status NOT IN (\\'trash\\',\\'auto-draft\\') ORDER BY ID DESC",ARRAY_A);foreach($rows as $x){$id=(int)$x["ID"];$d=["id"=>$id,"name"=>$x["post_title"],"slug"=>$x["post_name"],"post_status"=>$x["post_status"],"sku"=>get_post_meta($id,"_sku",true),"price"=>get_post_meta($id,"_regular_price",true),"sale_price"=>get_post_meta($id,"_sale_price",true),"stock"=>get_post_meta($id,"_stock",true),"stock_status"=>get_post_meta($id,"_stock_status",true),"type"=>"product"];echo "ROW|".base64_encode(wp_json_encode($d))."\\n";}echo "DONE|".count($rows)."\\n";';
+  for(const domain of domains){try{
+    const cmd='cd "$HOME/domains/'+domain+'/public_html"||exit 21;[ -f wp-config.php ]||exit 22;wp eval '+q(php)+' --skip-themes --skip-plugins 2>/dev/null';
+    const x=await sshExec(c,cmd,45000);let done=false;
+    for(const line of x.stdout.split('\n').filter(Boolean)){
+      if(line.startsWith('DONE|')){done=true;continue}
+      if(!line.startsWith('ROW|'))continue;
+      try{const p=JSON.parse(Buffer.from(line.slice(4),'base64').toString());if(p?.id)products.push({domain,...p,stock:p.stock===''?null:Number(p.stock),status:p.stock_status})}catch{diagnostics.push({domain,error:'product_row_parse_failed'})}
+    }
+    if(!done)diagnostics.push({domain,error:'product_catalog_incomplete'});
+  }catch(e){diagnostics.push({domain,error:e.message})}}
+  res.json({ok:true,products,diagnostics,count:products.length});
+}catch(e){res.status(400).json({ok:false,error:e.message})}});
+
 function proxy(req,res){const p=http.request({host:HOST,port:UPSTREAM_PORT,path:req.originalUrl||req.url,method:req.method,headers:{...req.headers,host:`${HOST}:${UPSTREAM_PORT}`}},u=>{res.statusCode=u.statusCode||502;for(const[k,v]of Object.entries(u.headers))if(v!==undefined)res.setHeader(k,v);u.pipe(res)});p.on('error',e=>res.status(502).json({ok:false,error:`Core unavailable: ${e.message}`}));req.pipe(p)}
 app.use((req,res)=>proxy(req,res));
 app.listen(FRONT_PORT,HOST,()=>console.log(`COMMAND gateway v0.9.5 unified-ssh-ops http://${HOST}:${FRONT_PORT} -> ${UPSTREAM_PORT}`));
