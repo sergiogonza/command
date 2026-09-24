@@ -47,7 +47,7 @@ app.post('/api/audit/activity',async(req,res)=>{try{
  const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(1000,Number(req.body.limit||500)));
  const base={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
  const run=async(cmd,timeout=18000)=>{try{return{ok:true,out:(await sshExec(base,cmd,timeout)).stdout,error:''}}catch(e){return{ok:false,out:'',error:e.message}}};
- const fileCmd=`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -xdev -type f -mtime -"$DAYS" \\( -path '*/node_modules/*' -o -path '*/vendor/*' -o -path '*/cache/*' -o -path '*/.git/*' -o -path '*/wpvividbackups/*' -o -path '*/updraft/*' \\) -prune -o -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT"`;
+ const fileCmd=`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -xdev \\( -path '*/node_modules/*' -o -path '*/vendor/*' -o -path '*/cache/*' -o -path '*/.git/*' -o -path '*/wpvividbackups/*' -o -path '*/updraft/*' \\) -prune -o -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT"`;
  const [fr,hr,kr,lr]=await Promise.all([
   run(fileCmd,25000),
   run(`LIMIT=${limit};for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done`,9000),
