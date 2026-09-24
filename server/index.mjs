@@ -66,7 +66,7 @@ app.post('/api/commerce/customers',async(req,r)=>{try{const php=`$users=get_user
 
 app.post('/api/audit/activity',async(req,r)=>{try{
  const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(500,Number(req.body.limit||200)));
- const cmd=\`DAYS=${days};LIMIT=${limit};ROOT="$HOME/domains";printf '==FILES==\\n';find "$ROOT" -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null|sort -nr|head -"$LIMIT";printf '==HISTORY==\\n';for h in "$HOME/.bash_history" "$HOME/.zsh_history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done;printf '==KEYS==\\n';for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done;printf '==PASSWD_META==\\n';[ -r /etc/shadow ]&&stat -c '%Y|%n' /etc/shadow 2>/dev/null||true\`;
+ const cmd=`DAYS=${days};LIMIT=${limit};ROOT="$HOME/domains";printf '==FILES==\\n';find "$ROOT" -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null|sort -nr|head -"$LIMIT";printf '==HISTORY==\\n';for h in "$HOME/.bash_history" "$HOME/.zsh_history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done;printf '==KEYS==\\n';for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done;printf '==PASSWD_META==\\n';[ -r /etc/shadow ]&&stat -c '%Y|%n' /etc/shadow 2>/dev/null||true`;
  const out=await execSSH(req.body,cmd,35000),sections={};let cur='';
  for(const line of out.split('\\n')){const m=line.match(/^==([A-Z_]+)==$/);if(m){cur=m[1];sections[cur]=[];continue}if(cur)(sections[cur]??=[]).push(line)}
  const files=(sections.FILES||[]).filter(Boolean).map(line=>{const [ts,size,...rest]=line.split('|');const full=rest.join('|'),homePrefix='/domains/';const p=full.includes(homePrefix)?full.slice(full.indexOf(homePrefix)+homePrefix.length):full;return{path:p,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\\/)(\\.git|node_modules|vendor|cache)(\\/|$)/i.test(x.path));
@@ -81,7 +81,7 @@ app.post('/api/audit/file-preview',async(req,r)=>{try{
  const rel=String(req.body.path||'').replace(/^\\/+/, '');if(!rel||rel.includes('..')||!rel.includes('/'))throw new Error('Invalid file path');
  if(!/\\.(txt|md|log|json|csv|js|jsx|ts|tsx|css|scss|html|htm|xml|yml|yaml|php|py|sh|conf)$/i.test(rel))throw new Error('Preview disabled for this file type');
  if(/(^|\\/)(wp-config\\.php|\\.env(?:\\.|$)|id_rsa|id_ed25519|authorized_keys|.*secret.*|.*credential.*|.*password.*)$/i.test(rel))throw new Error('Preview blocked for sensitive files');
- const cmd=\`p="$HOME/domains/${rel}";case "$p" in "$HOME/domains/"*) ;; *) exit 41;; esac;[ -f "$p" ]||exit 42;printf '==META==\\n';stat -c '%s|%Y|%n' "$p" 2>/dev/null;printf '==CONTENT==\\n';head -c 12000 "$p" 2>/dev/null\`;
+ const cmd=`p="$HOME/domains/${rel}";case "$p" in "$HOME/domains/"*) ;; *) exit 41;; esac;[ -f "$p" ]||exit 42;printf '==META==\\n';stat -c '%s|%Y|%n' "$p" 2>/dev/null;printf '==CONTENT==\\n';head -c 12000 "$p" 2>/dev/null`;
  const out=await execSSH(req.body,cmd,20000),m=out.match(/==META==\\n([^\\n]*)\\n==CONTENT==\\n([\\s\\S]*)$/);if(!m)throw new Error('Could not preview file');
  const [size,ts]=m[1].split('|');r.json({ok:true,path:rel,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString(),content:m[2],truncated:Number(size||0)>12000})
 }catch(e){r.status(400).json({ok:false,error:e.message})}});
