@@ -45,18 +45,23 @@ app.post('/api/domains',async(req,res)=>{try{const cmd=`for d in "$HOME"/domains
 
 app.post('/api/audit/activity',async(req,res)=>{try{
  const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(500,Number(req.body.limit||250)));
- const cmd=`DAYS=${days};LIMIT=${limit};printf '==FILES==\\n';if [ -d "$HOME/domains" ];then find "$HOME/domains" -xdev -maxdepth 8 \\( -type d \\( -name node_modules -o -name vendor -o -name cache -o -name .git -o -name wpvividbackups -o -name updraft \\) -prune \\) -o \\( -type f -mtime -"$DAYS" \\( -name '*.php' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.txt' -o -name '*.conf' -o -name '*.yml' -o -name '*.yaml' -o -name '*.log' \\) -printf '%T@|%s|%p\\n' \\) 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT";fi;printf '==HISTORY==\\n';for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&{ printf 'HISTORY_FILE|%s\\n' "$h";tail -n "$LIMIT" "$h";};done;printf '==KEYS==\\n';for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done;printf '==LOGINS==\\n';last -i -n 40 2>/dev/null||true`;
- const x=await sshExec(req.body,cmd,30000),raw=x.stdout,sections={};let cur='';
- for(const line of raw.split('\n')){const m=line.match(/^==([A-Z_]+)==$/);if(m){cur=m[1];sections[cur]=[];continue}if(cur)(sections[cur]??=[]).push(line)}
- const homeGuess=(sections.FILES||[]).map(x=>x.split('|').slice(2).join('|')).find(Boolean)?.replace(/\/domains\/.*$/,'')||'';
- const files=(sections.FILES||[]).filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');const full=rest.join('|');return{path:full,relative:homeGuess&&full.startsWith(homeGuess+'/')?full.slice(homeGuess.length+1):full,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\/)(node_modules|vendor|cache|\.git)(\/|$)/i.test(x.path));
- const rawHistory=(sections.HISTORY||[]).filter(x=>x&&!x.startsWith('HISTORY_FILE|')).slice(-limit);
+ const base={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
+ const run=async(cmd,timeout=10000)=>{try{return(await sshExec(base,cmd,timeout)).stdout}catch(e){return ''}};
+ const [filesRaw,historyRaw,keysRaw,loginsRaw]=await Promise.all([
+  run(`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -maxdepth 5 -type f -mtime -"$DAYS" \\( -name '*.php' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.txt' -o -name '*.conf' -o -name '*.yml' -o -name '*.yaml' -o -name '*.log' \\) -printf '%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT"`,12000),
+  run(`LIMIT=${limit};for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done`,7000),
+  run(`for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done`,7000),
+  run(`last -i -n 30 2>/dev/null|head -30||true`,7000)
+ ]);
+ const homeGuess=filesRaw.split('\n').map(x=>x.split('|').slice(2).join('|')).find(Boolean)?.replace(/\/domains\/.*$/,'')||'';
+ const files=filesRaw.split('\n').filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');const full=rest.join('|');return{path:full,relative:homeGuess&&full.startsWith(homeGuess+'/')?full.slice(homeGuess.length+1):full,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\/)(node_modules|vendor|cache|\.git)(\/|$)/i.test(x.path));
+ const rawHistory=historyRaw.split('\n').filter(Boolean).slice(-limit);
  const keyRx=/(\bpasswd\b|chpasswd\b|ssh-keygen\b|authorized_keys|--user_pass\b|wp\s+user\s+update\b.*--user_pass)/i;
  const redact=s=>String(s).replace(/(--password(?:=|\s+))\S+/ig,'$1[REDACTED]').replace(/(--user_pass(?:=|\s+))\S+/ig,'$1[REDACTED]').replace(/(password(?:=|\s+))\S+/ig,'$1[REDACTED]');
  const commands=rawHistory.map((line,id)=>({id:id+1,command:keyRx.test(line)?'[REDACTED CREDENTIAL/KEY CHANGE COMMAND]':redact(line.replace(/^:\s*\d+:\d+;/,'')),keyChange:keyRx.test(line)}));
- const keyChanges=[...commands.filter(x=>x.keyChange).map(x=>({type:'command',detail:x.command})),...(sections.KEYS||[]).filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');return{type:'authorized_keys',path:rest.join('|'),size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}})];
- const logins=(sections.LOGINS||[]).filter(Boolean);
- res.json({ok:true,days,files,commands,keyChanges,logins,capabilities:{recent_files:files.length>0,shell_history:rawHistory.length>0,authorized_keys:(sections.KEYS||[]).some(Boolean),login_history:logins.length>0},diagnostics:[files.length?`Recent file scan: ${files.length} files.`:'No recent files visible in scan.',rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history unavailable/empty; commands executed with history disabled or in other sessions cannot be reconstructed.',logins.length?`Login history: ${logins.length} rows.`:'Login history unavailable/empty.']})
+ const keyChanges=[...commands.filter(x=>x.keyChange).map(x=>({type:'command',detail:x.command})),...keysRaw.split('\n').filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');return{type:'authorized_keys',path:rest.join('|'),size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}})];
+ const logins=loginsRaw.split('\n').filter(Boolean);
+ res.json({ok:true,days,files,commands,keyChanges,logins,capabilities:{recent_files:files.length>0,shell_history:rawHistory.length>0,authorized_keys:keysRaw.trim().length>0,login_history:logins.length>0},diagnostics:[files.length?`Recent file scan: ${files.length} files.`:'No recent files visible in bounded scan.',rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history unavailable/empty.',logins.length?`Login history: ${logins.length} rows.`:'Login history unavailable/empty.']})
 }catch(e){res.status(400).json({ok:false,error:e.message})}});
 
 app.post('/api/audit/file-preview',async(req,res)=>{try{
