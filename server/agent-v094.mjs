@@ -45,25 +45,25 @@ app.post('/api/domains',async(req,res)=>{try{const cmd=`for d in "$HOME"/domains
 
 app.post('/api/audit/activity',async(req,res)=>{try{
  const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(500,Number(req.body.limit||250)));
- const cmd=\`DAYS=${days};LIMIT=${limit};printf '==FILES==\\n';for ROOT in "$HOME/domains" "$HOME";do [ -d "$ROOT" ]||continue;find "$ROOT" -xdev -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null;done|sort -t'|' -k1,1nr|awk -F'|' '!seen[$3]++'|head -"$LIMIT";printf '==HISTORY==\\n';for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&{ printf 'HISTORY_FILE|%s\\n' "$h";tail -n "$LIMIT" "$h";};done;printf '==KEYS==\\n';for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done;printf '==LOGINS==\\n';last -i -n 40 2>/dev/null||true\`;
+ const cmd=`DAYS=${days};LIMIT=${limit};printf '==FILES==\\n';for ROOT in "$HOME/domains" "$HOME";do [ -d "$ROOT" ]||continue;find "$ROOT" -xdev -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null;done|sort -t'|' -k1,1nr|awk -F'|' '!seen[$3]++'|head -"$LIMIT";printf '==HISTORY==\\n';for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&{ printf 'HISTORY_FILE|%s\\n' "$h";tail -n "$LIMIT" "$h";};done;printf '==KEYS==\\n';for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done;printf '==LOGINS==\\n';last -i -n 40 2>/dev/null||true`;
  const x=await sshExec(req.body,cmd,45000),raw=x.stdout,sections={};let cur='';
  for(const line of raw.split('\\n')){const m=line.match(/^==([A-Z_]+)==$/);if(m){cur=m[1];sections[cur]=[];continue}if(cur)(sections[cur]??=[]).push(line)}
- const homeGuess=(sections.FILES||[]).map(x=>x.split('|').slice(2).join('|')).find(Boolean)?.replace(/\\/domains\\/.*$/,'')||'';
- const files=(sections.FILES||[]).filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');const full=rest.join('|');return{path:full,relative:homeGuess&&full.startsWith(homeGuess+'/')?full.slice(homeGuess.length+1):full,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\\/)(node_modules|vendor|cache|\\.git)(\\/|$)/i.test(x.path));
+ const homeGuess=(sections.FILES||[]).map(x=>x.split('|').slice(2).join('|')).find(Boolean)?.replace(/\/domains\/.*$/,'')||'';
+ const files=(sections.FILES||[]).filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');const full=rest.join('|');return{path:full,relative:homeGuess&&full.startsWith(homeGuess+'/')?full.slice(homeGuess.length+1):full,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\/)(node_modules|vendor|cache|\.git)(\/|$)/i.test(x.path));
  const rawHistory=(sections.HISTORY||[]).filter(x=>x&&!x.startsWith('HISTORY_FILE|')).slice(-limit);
- const keyRx=/(\\bpasswd\\b|chpasswd\\b|ssh-keygen\\b|authorized_keys|--user_pass\\b|wp\\s+user\\s+update\\b.*--user_pass)/i;
- const redact=s=>String(s).replace(/(--password(?:=|\\s+))\\S+/ig,'$1[REDACTED]').replace(/(--user_pass(?:=|\\s+))\\S+/ig,'$1[REDACTED]').replace(/(password(?:=|\\s+))\\S+/ig,'$1[REDACTED]');
- const commands=rawHistory.map((line,id)=>({id:id+1,command:keyRx.test(line)?'[REDACTED CREDENTIAL/KEY CHANGE COMMAND]':redact(line.replace(/^:\\s*\\d+:\\d+;/,'')),keyChange:keyRx.test(line)}));
+ const keyRx=/(\bpasswd\b|chpasswd\b|ssh-keygen\b|authorized_keys|--user_pass\b|wp\s+user\s+update\b.*--user_pass)/i;
+ const redact=s=>String(s).replace(/(--password(?:=|\s+))\S+/ig,'$1[REDACTED]').replace(/(--user_pass(?:=|\s+))\S+/ig,'$1[REDACTED]').replace(/(password(?:=|\s+))\S+/ig,'$1[REDACTED]');
+ const commands=rawHistory.map((line,id)=>({id:id+1,command:keyRx.test(line)?'[REDACTED CREDENTIAL/KEY CHANGE COMMAND]':redact(line.replace(/^:\s*\d+:\d+;/,'')),keyChange:keyRx.test(line)}));
  const keyChanges=[...commands.filter(x=>x.keyChange).map(x=>({type:'command',detail:x.command})),...(sections.KEYS||[]).filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');return{type:'authorized_keys',path:rest.join('|'),size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}})];
  res.json({ok:true,days,files,commands,keyChanges,logins:(sections.LOGINS||[]).filter(Boolean),capabilities:{recent_files:files.length>0,shell_history:rawHistory.length>0,authorized_keys:(sections.KEYS||[]).some(Boolean),login_history:(sections.LOGINS||[]).some(Boolean)},diagnostics:[files.length?'Recent file scan returned data.':'No recent files visible in scan.',rawHistory.length?'Shell history readable.':'Shell history unavailable/empty; commands executed with history disabled or in other sessions cannot be reconstructed.']})
 }catch(e){res.status(400).json({ok:false,error:e.message})}});
 
 app.post('/api/audit/file-preview',async(req,res)=>{try{
  const path=String(req.body.path||'');if(!path||path.includes('..'))throw new Error('Invalid file path');
- if(!/\\.(txt|md|log|json|csv|js|jsx|ts|tsx|css|scss|html|htm|xml|yml|yaml|php|py|sh|conf)$/i.test(path))throw new Error('Preview disabled for this file type');
- if(/(^|\\/)(wp-config\\.php|\\.env(?:\\.|$)|id_rsa|id_ed25519|authorized_keys|.*secret.*|.*credential.*|.*password.*)$/i.test(path))throw new Error('Preview blocked for sensitive files');
- const safe=path.startsWith('/')?path:\`$HOME/${path}\`;const cmd=\`p=${q(safe)};case "$p" in "$HOME/"*|/home/*|/usr/home/*) ;; *) exit 41;; esac;[ -f "$p" ]||exit 42;printf '==META==\\n';stat -c '%s|%Y' "$p" 2>/dev/null;printf '==CONTENT==\\n';head -c 12000 "$p" 2>/dev/null\`;
- const x=await sshExec(req.body,cmd,20000),m=x.stdout.match(/==META==\\n([^\\n]*)\\n==CONTENT==\\n([\\s\\S]*)$/);if(!m)throw new Error('Could not preview file');const[size,ts]=m[1].split('|');res.json({ok:true,path,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString(),content:m[2],truncated:Number(size||0)>12000})
+ if(!/\.(txt|md|log|json|csv|js|jsx|ts|tsx|css|scss|html|htm|xml|yml|yaml|php|py|sh|conf)$/i.test(path))throw new Error('Preview disabled for this file type');
+ if(/(^|\/)(wp-config\.php|\.env(?:\.|$)|id_rsa|id_ed25519|authorized_keys|.*secret.*|.*credential.*|.*password.*)$/i.test(path))throw new Error('Preview blocked for sensitive files');
+ const safe=path.startsWith('/')?path:`$HOME/${path}`;const cmd=`p=${q(safe)};case "$p" in "$HOME/"*|/home/*|/usr/home/*) ;; *) exit 41;; esac;[ -f "$p" ]||exit 42;printf '==META==\\n';stat -c '%s|%Y' "$p" 2>/dev/null;printf '==CONTENT==\\n';head -c 12000 "$p" 2>/dev/null`;
+ const x=await sshExec(req.body,cmd,20000),m=x.stdout.match(/==META==\n([^\n]*)\n==CONTENT==\n([\s\S]*)$/);if(!m)throw new Error('Could not preview file');const[size,ts]=m[1].split('|');res.json({ok:true,path,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString(),content:m[2],truncated:Number(size||0)>12000})
 }catch(e){res.status(400).json({ok:false,error:e.message})}});
 
 // Fast single-domain PayPal read: one SSH session, one WordPress option read.
