@@ -44,15 +44,17 @@ app.post('/api/domains',async(req,res)=>{try{const cmd=`for d in "$HOME"/domains
 
 
 app.post('/api/audit/activity',async(req,res)=>{try{
- const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(500,Number(req.body.limit||250)));
+ const days=Math.max(1,Math.min(30,Number(req.body.days||7))),limit=Math.max(20,Math.min(1000,Number(req.body.limit||500)));
  const base={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
- const run=async(cmd,timeout=10000)=>{try{return(await sshExec(base,cmd,timeout)).stdout}catch(e){return ''}};
- const [filesRaw,historyRaw,keysRaw,loginsRaw]=await Promise.all([
-  run(`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -maxdepth 5 -type f -mtime -"$DAYS" \\( -name '*.php' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.md' -o -name '*.txt' -o -name '*.conf' -o -name '*.yml' -o -name '*.yaml' -o -name '*.log' \\) -printf '%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT"`,12000),
-  run(`LIMIT=${limit};for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done`,7000),
-  run(`for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done`,7000),
-  run(`last -i -n 30 2>/dev/null|head -30||true`,7000)
+ const run=async(cmd,timeout=18000)=>{try{return{ok:true,out:(await sshExec(base,cmd,timeout)).stdout,error:''}}catch(e){return{ok:false,out:'',error:e.message}}};
+ const fileCmd=`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -xdev -type f -mtime -"$DAYS" \\( -path '*/node_modules/*' -o -path '*/vendor/*' -o -path '*/cache/*' -o -path '*/.git/*' -o -path '*/wpvividbackups/*' -o -path '*/updraft/*' \\) -prune -o -type f -mtime -"$DAYS" -printf '%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k1,1nr|head -"$LIMIT"`;
+ const [fr,hr,kr,lr]=await Promise.all([
+  run(fileCmd,25000),
+  run(`LIMIT=${limit};for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done`,9000),
+  run(`for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done`,9000),
+  run(`last -i -n 60 2>/dev/null|head -60||true`,9000)
  ]);
+ const filesRaw=fr.out,historyRaw=hr.out,keysRaw=kr.out,loginsRaw=lr.out;
  const homeGuess=filesRaw.split('\n').map(x=>x.split('|').slice(2).join('|')).find(Boolean)?.replace(/\/domains\/.*$/,'')||'';
  const files=filesRaw.split('\n').filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');const full=rest.join('|');return{path:full,relative:homeGuess&&full.startsWith(homeGuess+'/')?full.slice(homeGuess.length+1):full,size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}}).filter(x=>x.path&&!/(^|\/)(node_modules|vendor|cache|\.git)(\/|$)/i.test(x.path));
  const rawHistory=historyRaw.split('\n').filter(Boolean).slice(-limit);
@@ -62,13 +64,14 @@ app.post('/api/audit/activity',async(req,res)=>{try{
  const keyChanges=[...commands.filter(x=>x.keyChange).map(x=>({type:'command',detail:x.command})),...keysRaw.split('\n').filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');return{type:'authorized_keys',path:rest.join('|'),size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}})];
  const logins=loginsRaw.split('\n').filter(Boolean);
  const loginIPs=[...new Set(extractIPs(loginsRaw))].map(ip=>({ip,geo:geo(ip),source:'ssh_login_history'}));
- const extOf=p=>{const m=String(p).toLowerCase().match(/\.([a-z0-9]{1,10})$/);return m?'.'+m[1]:'[no extension]'};
- const byExt={};for(const f of files)byExt[extOf(f.path)]=(byExt[extOf(f.path)]||0)+1;
+ const extOf=p=>{const m=String(p).toLowerCase().match(/\.([a-z0-9]{1,12})$/);return m?'.'+m[1]:'[no extension]'};
+ const byExt={},byHour={},byDomain={};for(const f of files){const ext=extOf(f.path);byExt[ext]=(byExt[ext]||0)+1;const d=new Date(f.mtime);const hour=Number.isNaN(d.getTime())?'unknown':String(d.getHours()).padStart(2,'0')+':00';byHour[hour]=(byHour[hour]||0)+1;const m=f.path.match(/\/domains\/([^/]+)\//);const domain=m?.[1]||'[unknown]';byDomain[domain]=(byDomain[domain]||0)+1}
  const patterns=Object.entries(byExt).map(([extension,count])=>({extension,count,percent:files.length?Math.round(count/files.length*100):0})).sort((a,b)=>b.count-a.count);
- const pathName=p=>String(p).split('/').pop()||'',rareExt=new Set(patterns.filter(x=>x.count<=2).map(x=>x.extension));
- const unusual=files.map(f=>{const name=pathName(f.path),ext=extOf(f.path);let score=0;const reasons=[];if(rareExt.has(ext)){score+=25;reasons.push('rare extension in selected window')}if(/^\.|^[a-f0-9]{16,}\.|^[a-z0-9]{24,}\./i.test(name)){score+=25;reasons.push('unusual/hidden filename')}if(/\.(php|phtml|phar)$/i.test(name)&&/\/(uploads?|images?|cache|tmp|temp)\//i.test(f.path)){score+=45;reasons.push('executable-like file in content/cache path')}if(/(shell|cmd|backdoor|wso|r57|b374k)/i.test(name)){score+=55;reasons.push('filename requires review')}return{...f,score:Math.min(100,score),reasons}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
- const recentSSH=loginIPs[0]||null;
- res.json({ok:true,days,files,commands,keyChanges,logins,loginIPs,fileStats:{patterns,total:files.length,unusual},attribution:{available:false,reason:'Filesystem mtime does not record the source IP that created a file. SSH login IPs are shown as nearby session evidence only; they are not attributed to individual files.',recentSSH},capabilities:{recent_files:files.length>0,shell_history:rawHistory.length>0,authorized_keys:keysRaw.trim().length>0,login_history:logins.length>0},diagnostics:[files.length?`Recent file scan: ${files.length} files.`:'No recent files visible in bounded scan.',rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history unavailable/empty.',logins.length?`Login history: ${logins.length} rows.`:'Login history unavailable/empty.']})
+ const hourly=Object.entries(byHour).map(([hour,count])=>({hour,count})).sort((a,b)=>a.hour.localeCompare(b.hour));
+ const domains=Object.entries(byDomain).map(([domain,count])=>({domain,count})).sort((a,b)=>b.count-a.count);
+ const rareExt=new Set(patterns.filter(x=>x.count<=Math.max(2,Math.ceil(files.length*.02))).map(x=>x.extension));
+ const unusual=files.map(f=>{const name=String(f.path).split('/').pop()||'',ext=extOf(f.path);let score=0;const reasons=[];if(rareExt.has(ext)){score+=25;reasons.push('low-frequency extension')}if(/^\.|^[a-f0-9]{16,}\.|^[a-z0-9]{24,}\./i.test(name)){score+=20;reasons.push('unusual/hidden filename')}if(/\.(php|phtml|phar)$/i.test(name)&&/\/(uploads?|images?|cache|tmp|temp)\//i.test(f.path)){score+=45;reasons.push('executable-like file in content/cache path')}if(/(shell|cmd|backdoor|wso|r57|b374k)/i.test(name)){score+=55;reasons.push('filename requires review')}return{...f,score:Math.min(100,score),reasons,ip:null,geo:null}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+ res.json({ok:true,days,files,commands,keyChanges,logins,loginIPs,fileStats:{patterns,hourly,domains,total:files.length,unusual},attribution:{available:false,reason:'The filesystem exposes modification time but not the source IP that performed each write. SSH login IPs are separate evidence and are not assigned to a file without an audit event that records both.'},capabilities:{recent_files:fr.ok,shell_history:hr.ok&&rawHistory.length>0,authorized_keys:kr.ok&&keysRaw.trim().length>0,login_history:lr.ok&&logins.length>0},diagnostics:[fr.ok?`Recent-file scan completed: ${files.length} writes visible.`:`Recent-file scan failed: ${fr.error}`,hr.ok?(rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history readable but empty.'):`Shell history failed: ${hr.error}`,lr.ok?(logins.length?`Login history: ${logins.length} rows.`:'Login history readable but empty.'):`Login history failed: ${lr.error}`]})
 }catch(e){res.status(400).json({ok:false,error:e.message})}});
 
 app.post('/api/audit/file-preview',async(req,res)=>{try{
