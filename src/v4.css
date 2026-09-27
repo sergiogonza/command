@@ -2,3 +2,16 @@
 input[type=file]{padding:4px;background:#020806;color:#85dba5;border:1px solid #1b4c33;max-width:100%}input[type=file]::file-selector-button{background:#07130e!important;color:#9affbd!important;border:1px solid #2b6a48!important;padding:7px 11px;margin-right:10px;font:inherit;cursor:pointer}input[type=file]::file-selector-button:hover{background:#0d2518!important}input[type=checkbox],input[type=radio]{appearance:none;-webkit-appearance:none;width:14px;height:14px;padding:0;border:1px solid #315f48;background:#020806;display:inline-grid;place-content:center;vertical-align:middle}input[type=radio]{border-radius:50%}input[type=checkbox]:checked::after,input[type=radio]:checked::after{content:'';width:8px;height:8px;background:#6cff9b;box-shadow:0 0 8px rgba(108,255,155,.65)}input[type=radio]:checked::after{border-radius:50%}
 .command-live-job{position:fixed;right:18px;bottom:58px;width:min(620px,46vw);max-height:48vh;z-index:90;border:1px solid #2c704c;background:rgba(2,10,6,.98);box-shadow:0 0 32px rgba(59,255,128,.16);padding:10px;color:#8feeb3}.command-live-job.done{border-color:#3f8f61}.clj-head{display:flex;justify-content:space-between;gap:10px;font-size:9px}.clj-head span{color:#baffcf}.clj-progress{height:5px;background:#081b12;margin:8px 0}.clj-progress i{display:block;height:100%;background:#68ff9d;transition:width .3s ease}.clj-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px}.clj-stats span{border:1px solid #143a27;padding:6px;font-size:7px;color:#587662}.clj-stats b{display:block;margin-top:3px;color:#a8ffc6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.command-live-job pre{margin:0;max-height:190px;overflow:auto;white-space:pre-wrap;border:1px solid #123522;padding:8px;background:#010604;color:#78c996;font-size:7px}
 @media(max-width:1100px){.v4-kpis{grid-template-columns:repeat(3,1fr)}.v4-three,.v4-two{grid-template-columns:1fr}.v4-shell{grid-template-columns:135px 1fr}.v4-shell aside{width:135px}.v4-metergrid{grid-template-columns:1fr 1fr}.command-live-job{width:calc(100vw - 170px);right:12px}}
+
+/* Hosting inventory HUD */
+.v4-host-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:12px;margin:12px 0 22px}
+.v4-host-tile{display:flex;flex-direction:column;gap:10px;padding:16px;border:1px solid #24463b;border-radius:10px;background:rgba(12,35,30,.65);min-width:0}
+.v4-host-tile strong{font-size:24px;color:#b4f8d5}
+.v4-host-tile code{font-size:12px;overflow-wrap:anywhere;color:#9ac7b5}
+.v4-host-tile small{opacity:.8}
+.v4-host-tile details{min-width:0}
+.v4-host-tile summary{cursor:pointer;font-size:12px;letter-spacing:.04em}
+.v4-host-domains{max-height:220px;overflow:auto;margin-top:8px;border-top:1px solid #24463b}
+.v4-host-domains>div{padding:7px 0;border-bottom:1px solid #24463b;overflow-wrap:anywhere;font-size:12px}
+.v4-host-badge{font-size:10px;border:1px solid #408f6b;border-radius:20px;padding:4px 8px;color:#9ee8b8;white-space:nowrap}
+.v4-host-badge.pending{color:#e6c88e;border-color:#977e43}
