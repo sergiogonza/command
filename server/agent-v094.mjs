@@ -5,6 +5,7 @@ import http from 'node:http';
 import {spawn} from 'node:child_process';
 import {Client} from 'ssh2';
 import geoip from 'geoip-lite';
+import {isIP} from 'node:net';
 
 const FRONT_PORT=Number(process.env.COMMAND_PORT||8787);
 const UPSTREAM_PORT=Number(process.env.COMMAND_UPSTREAM_PORT||8788);
@@ -48,11 +49,12 @@ app.post('/api/audit/activity',async(req,res)=>{try{
  const base={host:req.body.host,port:req.body.port,user:req.body.user,password:req.body.password};
  const run=async(cmd,timeout=18000)=>{try{return{ok:true,out:(await sshExec(base,cmd,timeout)).stdout,error:''}}catch(e){return{ok:false,out:'',error:e.message}}};
  const fileCmd=`DAYS=${days};LIMIT=${limit};[ -d "$HOME/domains" ]||exit 0;find "$HOME/domains" -xdev \\( -path '*/node_modules/*' -o -path '*/vendor/*' -o -path '*/cache/*' -o -path '*/.git/*' -o -path '*/wpvividbackups/*' -o -path '*/updraft/*' \\) -prune -o -type f -mtime -"$DAYS" -printf '%B@|%C@|%T@|%s|%p\\n' 2>/dev/null|sort -t'|' -k3,3nr|head -"$LIMIT"`;
- const [fr,hr,kr,lr]=await Promise.all([
+ const [fr,hr,kr,lr,sr]=await Promise.all([
   run(fileCmd,28000),
   run(`LIMIT=${limit};for h in "$HOME/.bash_history" "$HOME/.zsh_history" "$HOME/.history";do [ -r "$h" ]&&tail -n "$LIMIT" "$h";done`,9000),
   run(`for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/authorized_keys2";do [ -e "$f" ]&&stat -c '%Y|%s|%n' "$f" 2>/dev/null;done`,9000),
-  run(`last -i -n 60 2>/dev/null|head -60||true`,9000)
+  run(`last -i -n 60 2>/dev/null|head -60||true`,9000),
+  run(`printf 'SSH_CONNECTION=%s\\nSSH_CLIENT=%s\\n' "$SSH_CONNECTION" "$SSH_CLIENT";who -u 2>/dev/null|head -40;w -h 2>/dev/null|head -40`,9000)
  ]);
  const filesRaw=fr.out,historyRaw=hr.out,keysRaw=kr.out,loginsRaw=lr.out,cutoff=Date.now()-days*86400000;
  const homeGuess=filesRaw.split('\n').map(x=>x.split('|').slice(4).join('|')).find(Boolean)?.replace(/\/domains\/.*$/,'')||'';
@@ -63,7 +65,11 @@ app.post('/api/audit/activity',async(req,res)=>{try{
  const commands=rawHistory.map((line,id)=>({id:id+1,command:keyRx.test(line)?'[REDACTED CREDENTIAL/KEY CHANGE COMMAND]':redact(line.replace(/^:\s*\d+:\d+;/,'')),keyChange:keyRx.test(line)}));
  const keyChanges=[...commands.filter(x=>x.keyChange).map(x=>({type:'command',detail:x.command})),...keysRaw.split('\n').filter(Boolean).map(line=>{const[ts,size,...rest]=line.split('|');return{type:'authorized_keys',path:rest.join('|'),size:Number(size||0),mtime:new Date(Number(ts||0)*1000).toISOString()}})];
  const logins=loginsRaw.split('\n').filter(Boolean);
- const loginIPs=[...new Set(extractIPs(loginsRaw))].map(ip=>({ip,geo:geo(ip),source:'ssh_login_history'}));
+ const currentRaw=sr.out||'';
+ const currentMatch=currentRaw.match(/^SSH_CONNECTION=([^\\n]*)/m),clientMatch=currentRaw.match(/^SSH_CLIENT=([^\\n]*)/m);
+ const currentIP=[currentMatch?.[1]?.trim().split(/\\s+/)[0],clientMatch?.[1]?.trim().split(/\\s+/)[0]].find(x=>isIP(x));
+ const loginIPs=[...new Set([...extractIPs(loginsRaw),...extractIPs(currentRaw),...(currentIP?[currentIP]:[])])].filter(ip=>isIP(ip)).map(ip=>({ip,geo:geo(ip),source:ip===currentIP?'current_ssh_session':'ssh_login_history'}));
+ const currentSession=currentIP?{ip:currentIP,geo:geo(currentIP),source:currentMatch?.[1]?.startsWith(currentIP)?'SSH_CONNECTION':'SSH_CLIENT',observedAt:new Date().toISOString(),connection:currentMatch?.[1]||clientMatch?.[1]||''}:null;
  const extOf=p=>{const m=String(p).toLowerCase().match(/\.([a-z0-9]{1,16})$/);return m?'.'+m[1]:'[no extension]'};
  const byExt={},byHour={},byDomain={},byStatus={CREATED:0,MODIFIED:0};
  for(const f of files){const ext=extOf(f.path);f.extension=ext;byExt[ext]=(byExt[ext]||0)+1;byStatus[f.status]=(byStatus[f.status]||0)+1;const d=new Date(f.mtime),hour=Number.isNaN(d.getTime())?'unknown':String(d.getHours()).padStart(2,'0')+':00';byHour[hour]=(byHour[hour]||0)+1;const m=f.path.match(/\/domains\/([^/]+)\//),domain=m?.[1]||'[unknown]';f.domain=domain;const x=byDomain[domain]||(byDomain[domain]={count:0,bytes:0,created:0,modified:0,extensions:{}});x.count++;x.bytes+=f.size;x[f.status.toLowerCase()]++;x.extensions[ext]=(x.extensions[ext]||0)+1}
@@ -74,7 +80,7 @@ app.post('/api/audit/activity',async(req,res)=>{try{
  const totalBytes=files.reduce((n,f)=>n+f.size,0),avgSize=files.length?Math.round(totalBytes/files.length):0,medianSize=files.length?[...files].sort((a,b)=>a.size-b.size)[Math.floor(files.length/2)].size:0,perDay=days?Number((files.length/days).toFixed(2)):0,pdfs=files.filter(f=>f.extension==='.pdf').sort((a,b)=>new Date(b.mtime)-new Date(a.mtime));
  const peakHour=[...hourly].sort((a,b)=>b.count-a.count)[0]||null,topDomain=domains[0]||null,rareExt=new Set(patterns.filter(x=>x.count<=Math.max(2,Math.ceil(files.length*.02))).map(x=>x.extension));
  const unusual=files.map(f=>{const name=String(f.path).split('/').pop()||'',ext=f.extension;let score=0;const reasons=[];if(rareExt.has(ext)){score+=25;reasons.push('low-frequency extension')}if(f.size>Math.max(avgSize*8,25*1024*1024)){score+=20;reasons.push('unusually large file')}if(/^\.|^[a-f0-9]{16,}\.|^[a-z0-9]{24,}\./i.test(name)){score+=20;reasons.push('unusual/hidden filename')}if(/\.(php|phtml|phar)$/i.test(name)&&/\/(uploads?|images?|cache|tmp|temp)\//i.test(f.path)){score+=45;reasons.push('executable-like file in content/cache path')}if(/(shell|cmd|backdoor|wso|r57|b374k)/i.test(name)){score+=55;reasons.push('filename requires review')}return{...f,score:Math.min(100,score),reasons,ip:null,geo:null}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||b.size-a.size);
- res.json({ok:true,days,files:newest,commands,keyChanges,logins,loginIPs,fileStats:{patterns,hourly,domains,byStatus,total:files.length,totalBytes,avgSize,medianSize,perDay,largest,created,modified,pdfs,unusual,peakHour,topDomain},attribution:{available:false,reason:'Birth time is used to label CREATED only when the filesystem exposes it. Otherwise a recent write is labeled MODIFIED. Filesystem metadata does not identify the source IP. SSH login IPs are separate evidence and are not assigned to individual files.'},capabilities:{recent_files:fr.ok,birth_time:files.some(f=>!!f.birthtime),shell_history:hr.ok&&rawHistory.length>0,authorized_keys:kr.ok&&keysRaw.trim().length>0,login_history:lr.ok&&logins.length>0},diagnostics:[fr.ok?`Recent-file scan completed: ${files.length} files; ${created.length} created, ${modified.length} modified.`:`Recent-file scan failed: ${fr.error}`,files.length>=limit?`Result cap reached (${limit}); narrow the time window for a more complete list.`:'Result set is below the scan cap.',hr.ok?(rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history readable but empty.'):`Shell history failed: ${hr.error}`,lr.ok?(logins.length?`Login history: ${logins.length} rows.`:'Login history readable but empty.'):`Login history failed: ${lr.error}`]})
+ res.json({ok:true,days,files:newest,commands,keyChanges,logins,loginIPs,currentSession,fileStats:{patterns,hourly,domains,byStatus,total:files.length,totalBytes,avgSize,medianSize,perDay,largest,created,modified,pdfs,unusual,peakHour,topDomain},attribution:{available:false,reason:'Birth time is used to label CREATED only when the filesystem exposes it. Otherwise a recent write is labeled MODIFIED. Filesystem metadata does not identify the source IP. SSH login IPs are separate evidence and are not assigned to individual files.'},capabilities:{recent_files:fr.ok,birth_time:files.some(f=>!!f.birthtime),shell_history:hr.ok&&rawHistory.length>0,authorized_keys:kr.ok&&keysRaw.trim().length>0,login_history:lr.ok&&logins.length>0,current_ssh_session:!!currentSession},diagnostics:[fr.ok?`Recent-file scan completed: ${files.length} files; ${created.length} created, ${modified.length} modified.`:`Recent-file scan failed: ${fr.error}`,files.length>=limit?`Result cap reached (${limit}); narrow the time window for a more complete list.`:'Result set is below the scan cap.',hr.ok?(rawHistory.length?`Shell history: ${rawHistory.length} commands.`:'Shell history readable but empty.'):`Shell history failed: ${hr.error}`,lr.ok?(logins.length?`Login history: ${logins.length} rows.`:'Login history readable but empty.'):`Login history failed: ${lr.error}`,sr.ok?(currentSession?`Current SSH source: ${currentIP}.`:'Current SSH source not exposed by remote shell.'):`Current SSH source probe failed: ${sr.error}`]})
 }catch(e){res.status(400).json({ok:false,error:e.message})}});
 
 app.post('/api/audit/file-preview',async(req,res)=>{try{
